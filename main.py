@@ -1,80 +1,95 @@
 import os
 import csv
-import random
-import asyncio
-import schedule
-import time
-from dotenv import load_dotenv
+import json
 from web3 import Web3
+from dotenv import load_dotenv
+from datetime import datetime, time
 
-# Load .env file
+# Load environment variables
 load_dotenv()
 
-# Koneksi ke jaringan Taiko
-w3 = Web3(Web3.HTTPProvider('https://rpc.taiko.network'))
+RPC_URL = os.getenv('RPC_URL')
+WETH_CONTRACT_ADDRESS = os.getenv('WETH_CONTRACT_ADDRESS')
 
-# Load private keys dari .env
-wallet1_pk = os.getenv("WALLET1_PK")
-wallet2_pk = os.getenv("WALLET2_PK")
+# Load WETH ABI
+with open('abi.json') as f:
+    weth_abi = json.load(f)
 
-# Fungsi membaca wallet dari CSV (optional)
-def load_wallets_from_csv(filename):
+# Initialize Web3
+web3 = Web3(Web3.HTTPProvider(RPC_URL))
+weth_contract = web3.eth.contract(address=Web3.toChecksumAddress(WETH_CONTRACT_ADDRESS), abi=weth_abi)
+
+# Load wallets from CSV
+def load_wallets():
     wallets = []
-    with open(filename, mode='r') as file:
-        csv_reader = csv.DictReader(file)
-        for row in csv_reader:
-            wallets.append({
-                'private_key': row['private_key'],
-                'address': row['address']
-            })
+    with open('wallets.csv', newline='') as csvfile:
+        reader = csv.reader(csvfile)
+        for row in reader:
+            wallets.append(row[0])
     return wallets
 
-# Fungsi wrap
-def wrap(wallet_pk, amount, gas_price):
-    wallet = w3.eth.account.privateKeyToAccount(wallet_pk)
-    print(f'Wrapping {amount} ETH for wallet {wallet.address} with gas price {gas_price} Gwei')
-    # Implementasi transaksi wrap
-
-# Fungsi unwrap
-def unwrap(wallet_pk, gas_price):
-    wallet = w3.eth.account.privateKeyToAccount(wallet_pk)
-    balance = w3.eth.get_balance(wallet.address)
-    print(f'Unwrapping {balance} ETH for wallet {wallet.address} with gas price {gas_price} Gwei')
-    # Implementasi transaksi unwrap
-
-# Fungsi transaksi paralel
-async def parallel_transactions(wallets, iterations, min_amount, max_amount, gas_price):
-    loop = asyncio.get_event_loop()
-    for i in range(iterations):
-        tasks = []
-        for wallet in wallets:
-            wrap_amount = random.uniform(min_amount, max_amount)
-            tasks.append(loop.run_in_executor(None, wrap, wallet['private_key'], wrap_amount, gas_price))
-            tasks.append(loop.run_in_executor(None, unwrap, wallet['private_key'], gas_price))
-        await asyncio.gather(*tasks)
-
-# Konfigurasi awal
+# Setup configuration
 def setup():
     iterations = int(input("Masukkan jumlah iterasi: "))
-    gwei = int(input("Masukkan GWEI untuk gas price: "))
-    min_amount = float(input("Masukkan jumlah minimum wrap: "))
-    max_amount = float(input("Masukkan jumlah maksimum wrap: "))
-    schedule_time = input("Masukkan waktu untuk transaksi (format HH:MM): ")
+    gwei = float(input("Masukkan GWEI untuk gas price (misal 0.075): "))
+    min_amount = float(input("Masukkan jumlah minimum yang akan diwrap: "))
+    max_amount = float(input("Masukkan jumlah maksimum yang akan diwrap: "))
+    schedule_time = input("Masukkan jam untuk jadwal transaksi (HH:MM): ")
     return iterations, gwei, min_amount, max_amount, schedule_time
 
-# Fungsi terjadwal
-def scheduled_job(wallets):
-    iterations, gwei, min_amount, max_amount, _ = setup()
-    asyncio.run(parallel_transactions(wallets, iterations, min_amount, max_amount, gwei))
+# Randomize amount to wrap
+def random_wrap_amount(min_amount, max_amount):
+    return web3.toWei(min_amount + (max_amount - min_amount) * web3.utils.random(), 'ether')
 
-# Setup dan scheduling
-iterations, gwei, min_amount, max_amount, schedule_time = setup()
+# Execute WETH deposit (wrap)
+def wrap_weth(account, amount, gas_price):
+    transaction = weth_contract.functions.deposit().buildTransaction({
+        'from': account.address,
+        'value': amount,
+        'gas': 200000,
+        'gasPrice': web3.toWei(gas_price, 'gwei'),
+        'nonce': web3.eth.getTransactionCount(account.address)
+    })
+    signed_txn = account.signTransaction(transaction)
+    tx_hash = web3.eth.sendRawTransaction(signed_txn.rawTransaction)
+    return web3.toHex(tx_hash)
 
-# Menjadwalkan transaksi sesuai waktu input user
-wallets = load_wallets_from_csv('wallets.csv')  # Alternatif: gunakan wallet1_pk, wallet2_pk dari .env
-schedule.every().day.at(schedule_time).do(scheduled_job, wallets)
+# Execute WETH withdraw (unwrap)
+def unwrap_weth(account, gas_price):
+    balance = weth_contract.functions.balanceOf(account.address).call()
+    if balance > 0:
+        transaction = weth_contract.functions.withdraw(balance).buildTransaction({
+            'from': account.address,
+            'gas': 200000,
+            'gasPrice': web3.toWei(gas_price, 'gwei'),
+            'nonce': web3.eth.getTransactionCount(account.address)
+        })
+        signed_txn = account.signTransaction(transaction)
+        tx_hash = web3.eth.sendRawTransaction(signed_txn.rawTransaction)
+        return web3.toHex(tx_hash)
+    return None
 
-# Main loop untuk schedule
-while True:
-    schedule.run_pending()
-    time.sleep(60)
+# Main function to execute scheduled transactions
+def main():
+    wallets = load_wallets()
+    iterations, gwei, min_amount, max_amount, schedule_time = setup()
+    
+    while True:
+        current_time = datetime.now().strftime("%H:%M")
+        if current_time == schedule_time:
+            print(f"Running transactions at {current_time}")
+            for i in range(iterations):
+                for private_key in wallets:
+                    account = web3.eth.account.privateKeyToAccount(private_key)
+                    # Random wrap amount
+                    amount = random_wrap_amount(min_amount, max_amount)
+                    # Wrap WETH
+                    tx_wrap = wrap_weth(account, amount, gwei)
+                    print(f"Wrap Tx: {tx_wrap}")
+                    # Unwrap WETH
+                    tx_unwrap = unwrap_weth(account, gwei)
+                    print(f"Unwrap Tx: {tx_unwrap}")
+            break
+
+if __name__ == "__main__":
+    main()
