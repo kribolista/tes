@@ -1,5 +1,14 @@
 {
-  "amount_min": 0.01,
-  "amount_max": 0.05,
-  "gwei_default": 0.075
+  "iterations": 2,
+  "gwei": 10,
+  "amount": {
+    "wrap": {
+      "min": 1,
+      "max": 10
+    },
+    "unwrap": {
+      "min": 1,
+      "max": 10
+    }
+  }
 }
