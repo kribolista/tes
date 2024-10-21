@@ -1,17 +1,27 @@
 [
   {
     "constant": false,
-    "inputs": [],
-    "name": "deposit",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "wrap",
     "outputs": [],
-    "payable": true,
-    "stateMutability": "payable",
+    "payable": false,
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
     "constant": false,
-    "inputs": [],
-    "name": "withdraw",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "unwrap",
     "outputs": [],
     "payable": false,
     "stateMutability": "nonpayable",
